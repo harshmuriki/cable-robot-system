@@ -121,6 +121,7 @@ class AgricultureEnv(gym.Env):
         self.num_plants_captured = 0
         self.arm_state = "closed"
         self.target_pose = self.moving_box_center.copy()
+        self.visited_plants = []
         observation = {'moving_box_centers': self.moving_box_center, 'plant_positions':self.plant_positions}
         info = {}
         return observation, info
@@ -143,21 +144,32 @@ class AgricultureEnv(gym.Env):
         arm_reward_out = -100
 
         # Capture region <= might be more useful for 2nd phase
-        N = int(10.0 / self.delta_t)
-        capture_success = 0
-        in_region = []
-        for pos in self.capture_positions[-N:]:
-            distance = np.linalg.norm(np.array(pos) - np.array(self.target_pose))
-            if distance <= r_c:
-                in_region.append(1)
-            else:
-                in_region.append(0)
-        if sum(in_region) == N:
-            self.num_plants_captured += 1
-            capture_success = 1
-        else:
-            capture_success = 0
-        R_success = alpha * capture_success
+        # N = int(10.0 / self.delta_t)
+        # capture_success = 0
+        # in_region = []
+        # for pos in self.capture_positions[-N:]:
+        #     distance = np.linalg.norm(np.array(pos) - np.array(self.target_pose))
+        #     if distance <= r_c:
+        #         in_region.append(1)
+        #     else:
+        #         in_region.append(0)
+        # if sum(in_region) == N:
+        #     self.num_plants_captured += 1
+        #     capture_success = 1
+        # else:
+        #     capture_success = 0
+        # R_success = alpha * capture_success
+
+        new_plant_reward = 10.0
+        detection_threshold = 0.2  # threshold distance to consider the plant "seen"
+        R_new_plant = 0.0
+
+        for idx, plant in enumerate(self.plant_positions):
+            if idx not in self.visited_plants:
+                distance = np.linalg.norm(self.moving_box_center - plant)
+                if distance <= detection_threshold:
+                    R_new_plant += new_plant_reward
+                    self.visited_plants.append(idx)
 
         # Time penalty
         T_measured = self.cycle_time
@@ -175,17 +187,7 @@ class AgricultureEnv(gym.Env):
             if velocity < velocity_threshold and self.arm_state == "open":
                 idle_penalty = idle_penalty_factor
 
-        # Arm reward
-        R_arm = 0
-        if capture_success:
-            if self.arm_state == "open":
-                R_arm = arm_reward_out
-            elif self.arm_state == "closed":
-                R_arm = arm_reward_in
-            else:
-                R_arm = 0
-
-        total_reward = R_success - R_T + R_eff - idle_penalty + R_arm
+        total_reward = R_new_plant - R_T + R_eff - idle_penalty
         return total_reward
 
     def init_viusalization(self):

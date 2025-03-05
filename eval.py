@@ -36,18 +36,14 @@ def visualize_rewards(total_rewards, cycle_times):
     plt.show()
 
 
-env = AgricultureEnv(enable_viz=False)
-model = PPO("MultiInputPolicy", env, verbose=1, device="cuda", tensorboard_log="./log/", n_steps=128)
-model.learn(total_timesteps=1000, progress_bar=True, log_interval=1)
-model.save("ppo_agriculture_tmp")
-del model
+env = AgricultureEnv(enable_viz=True)
 model = PPO.load("ppo_agriculture_tmp", device="cuda")
 obs, _ = env.reset()  # Unpack the tuple to get the observation
-print("Done with training")
+print("Starting evaluation")
 
 all_total_rewards = []
 all_cycle_times = []
-num_episodes = 1000  # Set the number of episodes to evaluate
+num_episodes = 10  # Set the number of episodes to evaluate
 
 for episode in range(num_episodes):
     episode_reward = 0.0
@@ -69,3 +65,4 @@ for episode in range(num_episodes):
 
 env.close()
 visualize_rewards(all_total_rewards, all_cycle_times)
+

@@ -114,6 +114,8 @@ class AgricultureEnv(gym.Env):
         observation = {'moving_box_centers': self.moving_box_center,
                        'plant_positions': self.plant_positions}
         terminated = False
+        if len(self.visited_plants) >= len(self.plant_positions):
+            terminated = True
         truncated = False
         reward = self.get_reward()
         print("Current reward is: ", reward)
@@ -182,7 +184,7 @@ class AgricultureEnv(gym.Env):
                     self.visited_plants.append(idx)
 
         # Time penalty
-        T_measured = self.cycle_time
+        T_measured = self.cycle_time - self.cycle_start_time
         R_T = beta * max(0, T_measured - self.T_max)
 
         # Efficiency reward
@@ -197,7 +199,7 @@ class AgricultureEnv(gym.Env):
             p_current = np.array(self.capture_positions[-1])
             velocity = np.linalg.norm(p_current - p_prev) / (self.cycle_time - TIME_TAKEN_PER_PLANT)
             print(f"Velocity: {velocity}")
-            if velocity < velocity_threshold:
+            if velocity < velocity_threshold and R_new_plant > 0.0:
                 idle_penalty = idle_penalty_factor
 
         print(f"R_new_plant: {R_new_plant}, R_T: {R_T}, R_eff: {R_eff}, idle_penalty: {idle_penalty}")

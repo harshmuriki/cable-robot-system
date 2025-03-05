@@ -1,7 +1,40 @@
 from stable_baselines3 import PPO
 from agriculture_env import AgricultureEnv
+import matplotlib.pyplot as plt
+import time
 
-env = AgricultureEnv()
+def visualize_rewards(total_rewards, cycle_times):
+    """
+    Visualizes total rewards and cycle times per episode.
+
+    Args:
+        total_rewards (list of float): Total reward for each episode.
+        cycle_times (list of float): Cycle time (in seconds) for each episode.
+    """
+    episodes = range(1, len(total_rewards) + 1)
+    
+    fig, axs = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    
+    # Plot total reward per episode.
+    axs[0].plot(episodes, total_rewards, marker='o', label="Total Reward")
+    axs[0].set_title("Total Reward per Episode")
+    axs[0].set_ylabel("Reward")
+    axs[0].legend()
+    axs[0].grid(True)
+    
+    # Plot cycle time per episode.
+    axs[1].plot(episodes, cycle_times, marker='o', color='red', label="Cycle Time")
+    axs[1].set_title("Cycle Time per Episode")
+    axs[1].set_xlabel("Episode")
+    axs[1].set_ylabel("Time (sec)")
+    axs[1].legend()
+    axs[1].grid(True)
+    
+    plt.tight_layout()
+    plt.show()
+
+
+env = AgricultureEnv(enable_viz=False)
 model = PPO("MultiInputPolicy", env, verbose=1)
 model.learn(total_timesteps=10)
 model.save("ppo_agriculture")
@@ -9,12 +42,32 @@ del model
 model = PPO.load("ppo_agriculture")
 obs = env.reset()
 print("Done with training")
+
+all_total_rewards = []
+all_cycle_times = []
+episode_reward = 0.0
+episode_start_time = time.time()
+episode_count = 0
+
+
+all_total_rewards = []
 for i in range(1000):
     action, _states = model.predict(obs)
     obs, rewards, done, info = env.step(action)
+    episode_reward += rewards
+
     if done:
-        obs = env.reset()
+        cycle_time = time.time() - episode_start_time
+        all_total_rewards.append(episode_reward)
+        all_cycle_times.append(cycle_time)
+        print(f"Episode {episode_count+1}: Total Reward = {episode_reward:.2f}, Cycle Time = {cycle_time:.2f} sec")
+        
+        episode_reward = 0.0
+        episode_start_time = time.time()
+        obs, _ = env.reset()
+        episode_count += 1
 env.close()
+visualize_rewards(all_total_rewards, all_cycle_times)
 
 # for plant_pos in env.plant_positions:
 #     env.step(plant_pos)

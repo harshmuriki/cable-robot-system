@@ -31,7 +31,7 @@ PLANTS = np.linspace(-MOVING_BOUNDARY_X, MOVING_BOUNDARY_X, 5)
 PLANTS = np.array([[x, y] for x in PLANTS for y in PLANTS])
 PLANTS = np.hstack((PLANTS, np.zeros((len(PLANTS), 1))))[::-1]
 
-TIME_TAKEN_PER_PLANT = 2.0  # seconds
+TIME_TAKEN_PER_PLANT = 1  # seconds
 
 
 class AgricultureEnv(gym.Env):
@@ -100,15 +100,19 @@ class AgricultureEnv(gym.Env):
                 self.vis.update_renderer()
                 self.capture_positions.append(pos)
 
-            pause_start_time = time.time()
-            while time.time() - pause_start_time < TIME_TAKEN_PER_PLANT:
-                self.vis.poll_events()
-                self.vis.update_renderer()
-                self.capture_positions.append(self.moving_box_center.tolist())
         else:
             self.capture_positions.append(self.moving_box_center.tolist())
+        
+        pause_start_time = time.time()
+        while time.time() - pause_start_time < TIME_TAKEN_PER_PLANT:
+                # self.vis.poll_events()
+                # self.vis.update_renderer()
+                # self.capture_positions.append(self.moving_box_center.tolist())
+                pass
 
-        self.cycle_time = time.time() - self.cycle_start_time
+        # Use simulated time instead of wall-clock time:
+        self.cycle_time += self.delta_t
+
         observation = {'moving_box_centers': self.moving_box_center,
                        'plant_positions': self.plant_positions}
         terminated = False
@@ -125,8 +129,8 @@ class AgricultureEnv(gym.Env):
         self.plant_positions = PLANTS
         self.capture_positions = []
         self.current_target = None
-        self.cycle_start_time = time.time()
-        self.cycle_time = 0.0  # Initialize cycle_time
+        # Remove wall-clock based cycle time and use simulated time:
+        self.cycle_time = 0.0
         self.num_plants_captured = 0
         self.arm_state = "closed"
         self.target_pose = self.moving_box_center.copy()
@@ -165,21 +169,19 @@ class AgricultureEnv(gym.Env):
 
         R_new_plant = reward
 
-        # Time penalty
+        # Use simulated time (cycle_time)
         T_measured = self.cycle_time
         R_T = beta * max(0, T_measured - self.T_max)
 
-        # Efficiency reward
         R_eff = efficiency_const * \
             (self.num_plants_captured / T_measured) if T_measured > 0 else 0
 
-        # Idle time penalty
         idle_penalty = 0.0
         if len(self.capture_positions) >= 2:
             p_prev = np.array(self.capture_positions[0])
             p_current = np.array(self.capture_positions[-1])
             velocity = np.linalg.norm(
-                p_current - p_prev) / (T_measured) if T_measured > 0 else 0
+                p_current - p_prev) / T_measured if T_measured > 0 else 0
             if velocity < velocity_threshold and R_new_plant > 0.0:
                 idle_penalty = idle_penalty_factor
 

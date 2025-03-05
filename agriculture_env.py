@@ -80,7 +80,7 @@ class AgricultureEnv(gym.Env):
     def step(self, action):
         # action: [x, y, z]
         self.target_pose = np.array(action)
-        start_pos = self.moving_box_viz.get_center()
+        start_pos = self.moving_box_center
         end_pos = self.target_pose
         self.moving_box_center = end_pos
 
@@ -89,9 +89,7 @@ class AgricultureEnv(gym.Env):
             positions = self.interpolate_traj(
                 start_pos, end_pos, num_steps=100)
             for pos in positions:
-                # print(f"Moving to: {pos}, Current: {box.get_center()}")
                 self.moving_box_viz.translate(pos, relative=False)
-
                 new_cable_points = np.vstack(
                     (ANCHORS, self.get_box_corners(pos)))
                 self.cables_viz.points = o3d.utility.Vector3dVector(
@@ -102,14 +100,14 @@ class AgricultureEnv(gym.Env):
                 self.vis.update_renderer()
                 self.capture_positions.append(pos)
 
-            # Non-blocking pause
             pause_start_time = time.time()
             while time.time() - pause_start_time < TIME_TAKEN_PER_PLANT:
-                # Keep the visualization responsive during the pause
                 self.vis.poll_events()
                 self.vis.update_renderer()
                 self.capture_positions.append(self.moving_box_center.tolist())
-                # time.sleep(self.delta_t)
+        else:
+            self.capture_positions.append(self.moving_box_center.tolist())
+
         self.cycle_time = time.time() - self.cycle_start_time
         observation = {'moving_box_centers': self.moving_box_center,
                        'plant_positions': self.plant_positions}
@@ -141,68 +139,82 @@ class AgricultureEnv(gym.Env):
     def close(self):
         pass
 
+# def get_reward(self):
+    #     # Params
+    #     alpha = 10.0
+    #     r_c = 0.2
+    #     beta = 0.2
+    #     efficiency_const = 5.0
+    #     idle_penalty_factor = 1.0
+    #     velocity_threshold = 0.1
+    #     arm_reward_in = 100
+    #     arm_reward_out = -100
+
+    #     # Capture region <= might be more useful for 2nd phase
+    #     # N = int(10.0 / self.delta_t)
+    #     # capture_success = 0
+    #     # in_region = []
+    #     # for pos in self.capture_positions[-N:]:
+    #     #     distance = np.linalg.norm(np.array(pos) - np.array(self.target_pose))
+    #     #     if distance <= r_c:
+    #     #         in_region.append(1)
+    #     #     else:
+    #     #         in_region.append(0)
+    #     # if sum(in_region) == N:
+    #     #     self.num_plants_captured += 1
+    #     #     capture_success = 1
+    #     # else:
+    #     #     capture_success = 0
+    #     # R_success = alpha * capture_success
+
+    #     new_plant_reward = 10.0
+    #     detection_threshold = 0.5  # threshold distance to consider the plant "seen"
+    #     R_new_plant = 0.0
+
+    #     for idx, plant in enumerate(self.plant_positions):
+    #         if idx not in self.visited_plants:
+    #             distance = np.linalg.norm(self.moving_box_center - plant)
+    #             if distance <= detection_threshold:
+    #                 print(f"New plant detected: {plant}, Distance: {distance}")
+    #                 R_new_plant += new_plant_reward
+    #                 self.visited_plants.append(idx)
+
+    #     # Time penalty
+    #     T_measured = self.cycle_time
+    #     R_T = beta * max(0, T_measured - self.T_max)
+
+    #     # Efficiency reward
+    #     R_eff = efficiency_const * \
+    #         (self.num_plants_captured / T_measured) if T_measured > 0 else 0
+
+    #     # Idle time penalty
+    #     # If there is no significant movement in the 1st and the last steps, penalize
+    #     idle_penalty = 0.0
+    #     if len(self.capture_positions) >= 2:
+    #         p_prev = np.array(self.capture_positions[0])
+    #         p_current = np.array(self.capture_positions[-1])
+    #         velocity = np.linalg.norm(p_current - p_prev) / (self.cycle_time - TIME_TAKEN_PER_PLANT)
+    #         print(f"Velocity: {velocity}")
+    #         if velocity < velocity_threshold:
+    #             idle_penalty = idle_penalty_factor
+
+    #     print(f"R_new_plant: {R_new_plant}, R_T: {R_T}, R_eff: {R_eff}, idle_penalty: {idle_penalty}")
+    #     total_reward = R_new_plant - R_T + R_eff - idle_penalty
+    #     return total_reward
+
     def get_reward(self):
-        # Params
-        alpha = 10.0
-        r_c = 0.2
-        beta = 0.2
-        efficiency_const = 5.0
-        idle_penalty_factor = 1.0
-        velocity_threshold = 0.1
-        arm_reward_in = 100
-        arm_reward_out = -100
-
-        # Capture region <= might be more useful for 2nd phase
-        # N = int(10.0 / self.delta_t)
-        # capture_success = 0
-        # in_region = []
-        # for pos in self.capture_positions[-N:]:
-        #     distance = np.linalg.norm(np.array(pos) - np.array(self.target_pose))
-        #     if distance <= r_c:
-        #         in_region.append(1)
-        #     else:
-        #         in_region.append(0)
-        # if sum(in_region) == N:
-        #     self.num_plants_captured += 1
-        #     capture_success = 1
-        # else:
-        #     capture_success = 0
-        # R_success = alpha * capture_success
-
-        new_plant_reward = 10.0
-        detection_threshold = 0.5  # threshold distance to consider the plant "seen"
-        R_new_plant = 0.0
+        reward = 0.0
+        detection_threshold = 0.5
 
         for idx, plant in enumerate(self.plant_positions):
             if idx not in self.visited_plants:
                 distance = np.linalg.norm(self.moving_box_center - plant)
                 if distance <= detection_threshold:
-                    print(f"New plant detected: {plant}, Distance: {distance}")
-                    R_new_plant += new_plant_reward
+                    reward += 10.0
                     self.visited_plants.append(idx)
+                    self.num_plants_captured += 1  # Update this counter too
 
-        # Time penalty
-        T_measured = self.cycle_time
-        R_T = beta * max(0, T_measured - self.T_max)
-
-        # Efficiency reward
-        R_eff = efficiency_const * \
-            (self.num_plants_captured / T_measured) if T_measured > 0 else 0
-
-        # Idle time penalty
-        # If there is no significant movement in the 1st and the last steps, penalize
-        idle_penalty = 0.0
-        if len(self.capture_positions) >= 2:
-            p_prev = np.array(self.capture_positions[0])
-            p_current = np.array(self.capture_positions[-1])
-            velocity = np.linalg.norm(p_current - p_prev) / (self.cycle_time - TIME_TAKEN_PER_PLANT)
-            print(f"Velocity: {velocity}")
-            if velocity < velocity_threshold:
-                idle_penalty = idle_penalty_factor
-
-        print(f"R_new_plant: {R_new_plant}, R_T: {R_T}, R_eff: {R_eff}, idle_penalty: {idle_penalty}")
-        total_reward = R_new_plant - R_T + R_eff - idle_penalty
-        return total_reward
+        return reward
 
     def init_viusalization(self):
         self.vis = o3d.visualization.Visualizer()

@@ -65,19 +65,21 @@ class AgricultureEnv(gym.Env):
                 )
             }
         )
+        self.target_pose = None
+        self.delta_t = 0.1
+        self.T_max = 60.0
         self.reset()
         self.enable_viz = enable_viz
         if enable_viz:
             self.init_viusalization()
 
-
     def step(self, action):
         # action: [x, y, z]
+        self.target_pose = np.array(action)
         start_pos = self.moving_box_viz.get_center()
-        end_pos = action
+        end_pos = self.target_pose
         self.moving_box_center = end_pos
         
-
         print("Moving to a new plant: ", end_pos)
         if self.enable_viz:
             positions = self.interpolate_traj(start_pos, end_pos, num_steps=100)
@@ -91,6 +93,7 @@ class AgricultureEnv(gym.Env):
                 self.vis.update_geometry(self.cables_viz)
                 self.vis.poll_events()
                 self.vis.update_renderer()
+                self.capture_positions.append(pos)
 
             # Non-blocking pause
             pause_start_time = time.time()
@@ -98,16 +101,26 @@ class AgricultureEnv(gym.Env):
                 # Keep the visualization responsive during the pause
                 self.vis.poll_events()
                 self.vis.update_renderer()
+                self.capture_positions.append(self.moving_box_center.tolist())
+                time.sleep(self.delta_t)
+        self.cycle_time = time.time() - self.cycle_start_time
         observation = {'moving_box_centers': self.moving_box_center, 'plant_positions':self.plant_positions}
         terminated = False
         truncated = False
         reward = self.get_reward()
+        print("Current reward is: ", reward)
         info = {}
         return observation, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
         self.moving_box_center = np.array([0, 0, 0])
         self.plant_positions = PLANTS
+        self.capture_positions = []
+        self.current_target = None
+        self.cycle_start_time = time.time()
+        self.num_plants_captured = 0
+        self.arm_state = "closed"
+        self.target_pose = self.moving_box_center.copy()
         observation = {'moving_box_centers': self.moving_box_center, 'plant_positions':self.plant_positions}
         info = {}
         return observation, info
@@ -119,7 +132,61 @@ class AgricultureEnv(gym.Env):
         pass
     
     def get_reward(self):
-        pass
+        # Params
+        alpha = 10.0
+        r_c = 0.2
+        beta = 1.0
+        efficiency_const = 5.0
+        idle_penalty_factor = 1.0
+        velocity_threshold = 0.01
+        arm_reward_in = 100 
+        arm_reward_out = -100
+
+        # Capture region <= might be more useful for 2nd phase
+        N = int(10.0 / self.delta_t)
+        capture_success = 0
+        in_region = []
+        for pos in self.capture_positions[-N:]:
+            distance = np.linalg.norm(np.array(pos) - np.array(self.target_pose))
+            if distance <= r_c:
+                in_region.append(1)
+            else:
+                in_region.append(0)
+        if sum(in_region) == N:
+            self.num_plants_captured += 1
+            capture_success = 1
+        else:
+            capture_success = 0
+        R_success = alpha * capture_success
+
+        # Time penalty
+        T_measured = self.cycle_time
+        R_T = beta * max(0, T_measured - self.T_max)
+
+        # Efficiency reward 
+        R_eff = efficiency_const * (self.num_plants_captured / T_measured) if T_measured > 0 else 0
+
+        # Idle time penalty
+        idle_penalty = 0.0
+        if len(self.capture_positions) >= 2:
+            p_prev = np.array(self.capture_positions[-2])
+            p_current = np.array(self.capture_positions[-1])
+            velocity = np.linalg.norm(p_current - p_prev) / self.delta_t
+            if velocity < velocity_threshold and self.arm_state == "open":
+                idle_penalty = idle_penalty_factor
+
+        # Arm reward
+        R_arm = 0
+        if capture_success:
+            if self.arm_state == "open":
+                R_arm = arm_reward_out
+            elif self.arm_state == "closed":
+                R_arm = arm_reward_in
+            else:
+                R_arm = 0
+
+        total_reward = R_success - R_T + R_eff - idle_penalty + R_arm
+        return total_reward
 
     def init_viusalization(self):
         self.vis = o3d.visualization.Visualizer()

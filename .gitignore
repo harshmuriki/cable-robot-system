@@ -1,3 +1,4 @@
+*.zip
 .vscode/
 log/
 # Byte-compiled / optimized / DLL files

@@ -37,7 +37,7 @@ def visualize_rewards(total_rewards, cycle_times):
 
 
 env = AgricultureEnv(enable_viz=True)
-model = PPO.load("ppo_agriculture_tmp", device="cuda")
+model = PPO.load("ppo_simple_visited", device="cuda")
 obs, _ = env.reset()  # Unpack the tuple to get the observation
 print("Starting evaluation")
 

@@ -4,8 +4,7 @@ from gymnasium import spaces
 import open3d as o3d
 import time
 BOX_SIZE = 0.3
-BOUNDING_BOX_LENGTH = 2.0
-BOUNDING_BOX_WIDTH = 2.0
+BOUNDING_BOX_LENGTH = BOUNDING_BOX_WIDTH = 1.0
 BOUNDING_BOX_HEIGHT = BOX_SIZE
 
 ANCHORS = np.array([
@@ -26,8 +25,10 @@ MARGIN = 0.2
 MOVING_BOUNDARY_X = BOUNDING_BOX_LENGTH - BOX_SIZE/2 - MARGIN
 MOVING_BOUNDARY_Y = BOUNDING_BOX_WIDTH - BOX_SIZE/2 - MARGIN
 
-# 5 * 5 grid of plants' centers
-PLANTS = np.linspace(-MOVING_BOUNDARY_X, MOVING_BOUNDARY_X, 5)
+# GRID_SIZE * GRID_SIZE grid of plants' centers
+GRID_SIZE = 2
+CAMERA_RADIUS = 0.2  # radius of the camera
+PLANTS = np.linspace(-MOVING_BOUNDARY_X, MOVING_BOUNDARY_X, GRID_SIZE)
 PLANTS = np.array([[x, y] for x in PLANTS for y in PLANTS])
 PLANTS = np.hstack((PLANTS, np.zeros((len(PLANTS), 1))))[::-1]
 
@@ -64,7 +65,10 @@ class AgricultureEnv(gym.Env):
                         np.array([MOVING_BOUNDARY_X, MOVING_BOUNDARY_Y, 0]), (len(PLANTS), 1)),
                     shape=(len(PLANTS), 3),
                     dtype=np.float32
-                )
+                ),
+                'visited_plants_map': spaces.MultiBinary(
+                    n = GRID_SIZE * GRID_SIZE
+                ), # a binary GRID * GRID map of visited plants
             }
         )
 
@@ -90,12 +94,14 @@ class AgricultureEnv(gym.Env):
                 start_pos, end_pos, num_steps=100)
             for pos in positions:
                 self.moving_box_viz.translate(pos, relative=False)
+                self.camera_zone_viz.translate(pos + np.array([0, 0, 0.6]), relative=False)
                 new_cable_points = np.vstack(
                     (ANCHORS, self.get_box_corners(pos)))
                 self.cables_viz.points = o3d.utility.Vector3dVector(
                     new_cable_points)
                 self.vis.update_geometry(self.moving_box_viz)
                 self.vis.update_geometry(self.cables_viz)
+                self.vis.update_geometry(self.camera_zone_viz)
                 self.vis.poll_events()
                 self.vis.update_renderer()
                 self.capture_positions.append(pos)
@@ -114,9 +120,10 @@ class AgricultureEnv(gym.Env):
         self.cycle_time += self.delta_t
 
         observation = {'moving_box_centers': self.moving_box_center,
-                       'plant_positions': self.plant_positions}
+                       'plant_positions': self.plant_positions,
+                       'visited_plants_map': self.visited_plants_map}
         terminated = False
-        if len(self.visited_plants) >= len(self.plant_positions):
+        if self.visited_plants_map.sum() >= len(self.plant_positions):
             terminated = True
         truncated = False
         reward = self.get_reward()
@@ -134,9 +141,10 @@ class AgricultureEnv(gym.Env):
         self.num_plants_captured = 0
         self.arm_state = "closed"
         self.target_pose = self.moving_box_center.copy()
-        self.visited_plants = []
+        self.visited_plants_map = np.zeros((GRID_SIZE * GRID_SIZE), dtype=np.int8)
         observation = {'moving_box_centers': self.moving_box_center,
-                       'plant_positions': self.plant_positions}
+                       'plant_positions': self.plant_positions,
+                       'visited_plants_map': self.visited_plants_map}
         info = {}
         return observation, info
 
@@ -156,39 +164,47 @@ class AgricultureEnv(gym.Env):
         velocity_threshold = 0.1
 
         # Plant detection reward
-        detection_threshold = 0.5  # threshold distance to consider the plant "seen"
+        detection_threshold = CAMERA_RADIUS  # threshold distance to consider the plant "seen"
         reward = 0.0
 
-        for idx, plant in enumerate(self.plant_positions):
-            if idx not in self.visited_plants:
-                distance = np.linalg.norm(self.moving_box_center - plant)
-                if distance <= detection_threshold:
-                    reward += 10.0
-                    self.visited_plants.append(idx)
-                    self.num_plants_captured += 1
+        # Calculate distances to all plants
+        distances = np.linalg.norm(self.plant_positions - self.moving_box_center, axis=1)
+
+        # Find plants within detection threshold
+        detected_plants = np.where(distances <= detection_threshold)[0]
+
+        # Update visited plants map and calculate reward
+        for idx in detected_plants:
+            if self.visited_plants_map[idx] == 0:
+                reward += 10.0
+                self.visited_plants_map[idx] = 1
+                self.num_plants_captured += 1
 
         R_new_plant = reward
 
-        # Use simulated time (cycle_time)
-        T_measured = self.cycle_time
-        R_T = beta * max(0, T_measured - self.T_max)
+        # # Use simulated time (cycle_time)
+        # T_measured = self.cycle_time
+        # R_T = beta * max(0, T_measured - self.T_max)
 
-        R_eff = efficiency_const * \
-            (self.num_plants_captured / T_measured) if T_measured > 0 else 0
+        # R_eff = efficiency_const * \
+        #     (self.num_plants_captured / T_measured) if T_measured > 0 else 0
 
-        idle_penalty = 0.0
-        if len(self.capture_positions) >= 2:
-            p_prev = np.array(self.capture_positions[0])
-            p_current = np.array(self.capture_positions[-1])
-            velocity = np.linalg.norm(
-                p_current - p_prev) / T_measured if T_measured > 0 else 0
-            if velocity < velocity_threshold and R_new_plant > 0.0:
-                idle_penalty = idle_penalty_factor
+        # idle_penalty = 0.0
+        # if len(self.capture_positions) >= 2:
+        #     p_prev = np.array(self.capture_positions[0])
+        #     p_current = np.array(self.capture_positions[-1])
+        #     velocity = np.linalg.norm(
+        #         p_current - p_prev) / T_measured if T_measured > 0 else 0
+        #     if velocity < velocity_threshold and R_new_plant > 0.0:
+        #         idle_penalty = idle_penalty_factor
 
+        # print(
+        #     f"R_new_plant: {R_new_plant}, R_T: {R_T}, R_eff: {R_eff}, idle_penalty: {idle_penalty}")
+        # # Include all reward components
+        # total_reward = R_new_plant - R_T + R_eff - idle_penalty
         print(
-            f"R_new_plant: {R_new_plant}, R_T: {R_T}, R_eff: {R_eff}, idle_penalty: {idle_penalty}")
-        # Include all reward components
-        total_reward = R_new_plant - R_T + R_eff - idle_penalty
+            f"R_new_plant: {R_new_plant}")
+        total_reward = R_new_plant
         return total_reward
 
     def init_viusalization(self):
@@ -198,8 +214,10 @@ class AgricultureEnv(gym.Env):
         self.moving_space_viz = self.create_bounding_box()
         self.moving_box_viz = self.create_box()
         self.hydroponic_plate_viz = self.create_hydroponic_plate()
+        self.camera_zone_viz = self.create_camera_zone()
         self.moving_box_viz.translate(self.moving_box_center)  # Start position
-        self.cables_viz = self.create_cables(np.array(self.moving_box_center))
+        self.camera_zone_viz.translate(self.moving_box_center + np.array([0, 0, 0.6]))  # Start position
+        self.cables_viz = self.create_cables(self.moving_box_center)
         coordinate_frame_viz = o3d.geometry.TriangleMesh.create_coordinate_frame(
             size=0.3, origin=[0, 0, 0])
         self.plants_viz = self.create_plants_visualization(
@@ -207,6 +225,7 @@ class AgricultureEnv(gym.Env):
         self.vis.add_geometry(coordinate_frame_viz)
         self.vis.add_geometry(self.moving_space_viz)
         self.vis.add_geometry(self.moving_box_viz)
+        self.vis.add_geometry(self.camera_zone_viz)
         for plant in self.plants_viz:
             self.vis.add_geometry(plant)
         self.vis.add_geometry(self.hydroponic_plate_viz)
@@ -236,7 +255,11 @@ class AgricultureEnv(gym.Env):
         mesh.compute_vertex_normals()
         mesh.paint_uniform_color(color)
         return mesh
-
+    def create_camera_zone(self, resolution=50, color=[0.9, 0.8, 0.2]):
+        circle_zone = o3d.geometry.TriangleMesh.create_cylinder(radius=CAMERA_RADIUS, height=0.001, resolution=resolution)
+        circle_zone.compute_vertex_normals()
+        circle_zone.paint_uniform_color(color)
+        return circle_zone
     # This is the points/conners of the box that moves around
 
     def get_box_corners(self, box_center):
@@ -298,7 +321,7 @@ class AgricultureEnv(gym.Env):
     def create_hydroponic_plate(self, size=0.1, color=[0.5, 0.5, 0.5]):
         print(BOUNDING_BOX_WIDTH, BOUNDING_BOX_LENGTH)
         mesh = o3d.geometry.TriangleMesh.create_box(
-            width=4, height=4, depth=size)
+            width=BOUNDING_BOX_WIDTH*2, height=BOUNDING_BOX_WIDTH*2, depth=size)
         mesh.compute_vertex_normals()
         mesh.paint_uniform_color(color)
         mesh.translate([-BOUNDING_BOX_WIDTH, -BOUNDING_BOX_LENGTH, 0.6])

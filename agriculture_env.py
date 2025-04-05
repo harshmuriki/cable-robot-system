@@ -45,11 +45,12 @@ class AgricultureEnv(gym.Env):
         # Define action and observation space
         # They must be gym.spaces objects
         # Example when using discrete actions:
-        self.action_space = spaces.Box(
-            low=np.array([-MOVING_BOUNDARY_X, -MOVING_BOUNDARY_Y, 0]),
-            high=np.array([MOVING_BOUNDARY_X, MOVING_BOUNDARY_Y, 0]),
-            dtype=np.float32
-        )
+        # self.action_space = spaces.Box(
+        #     low=np.array([-MOVING_BOUNDARY_X, -MOVING_BOUNDARY_Y, 0]),
+        #     high=np.array([MOVING_BOUNDARY_X, MOVING_BOUNDARY_Y, 0]),
+        #     dtype=np.float32
+        # )
+        self.action_space = spaces.Discrete(GRID_SIZE * GRID_SIZE)
         # Example for using image as input (channel-first; channel-last also works):
         self.observation_space = spaces.Dict(
             {
@@ -58,17 +59,20 @@ class AgricultureEnv(gym.Env):
                     high=np.array([MOVING_BOUNDARY_X, MOVING_BOUNDARY_Y, 0]),
                     dtype=np.float32
                 ),
-                'plant_positions': spaces.Box(
-                    low=np.tile(
-                        np.array([-MOVING_BOUNDARY_X, -MOVING_BOUNDARY_Y, 0]), (len(PLANTS), 1)),
-                    high=np.tile(
-                        np.array([MOVING_BOUNDARY_X, MOVING_BOUNDARY_Y, 0]), (len(PLANTS), 1)),
-                    shape=(len(PLANTS), 3),
-                    dtype=np.float32
-                ),
-                'visited_plants_map': spaces.MultiBinary(
+                'unvisited_plants_map': spaces.MultiBinary(
                     n = GRID_SIZE * GRID_SIZE
-                ), # a binary GRID * GRID map of visited plants
+                ), # a binary GRID * GRID map of unvisited plants
+                # 'plant_positions': spaces.Box(
+                #     low=np.tile(
+                #         np.array([-MOVING_BOUNDARY_X, -MOVING_BOUNDARY_Y, 0]), (len(PLANTS), 1)),
+                #     high=np.tile(
+                #         np.array([MOVING_BOUNDARY_X, MOVING_BOUNDARY_Y, 0]), (len(PLANTS), 1)),
+                #     shape=(len(PLANTS), 3),
+                #     dtype=np.float32
+                # ),
+                # 'visited_plants_map': spaces.MultiBinary(
+                #     n = GRID_SIZE * GRID_SIZE
+                # ), # a binary GRID * GRID map of visited plants
             }
         )
 
@@ -76,19 +80,24 @@ class AgricultureEnv(gym.Env):
         self.target_pose = None
         self.delta_t = 0.1
         self.T_max = 60.0
-        self.reset()
         self.enable_viz = enable_viz
+        self.reset()
         if enable_viz:
             self.init_viusalization()
+    def mark_plant_as_visited(self, idx, color=[0.7, 0.7, 0.7]):
+        self.plants_viz[idx].paint_uniform_color(color)
+        self.vis.update_geometry(self.plants_viz[idx])
 
     def step(self, action):
-        # action: [x, y, z]
-        self.target_pose = np.array(action)
+        # # action: [x, y, z]
+        # self.target_pose = np.array(action)
+        self.target_pose = self.plant_positions[action]
+
         start_pos = self.moving_box_center
         end_pos = self.target_pose
         self.moving_box_center = end_pos
 
-        print("Moving to a new plant: ", end_pos)
+        print("Moving to a new position: ", end_pos)
         if self.enable_viz:
             positions = self.interpolate_traj(
                 start_pos, end_pos, num_steps=100)
@@ -119,14 +128,15 @@ class AgricultureEnv(gym.Env):
         # Use simulated time instead of wall-clock time:
         self.cycle_time += self.delta_t
 
-        observation = {'moving_box_centers': self.moving_box_center,
-                       'plant_positions': self.plant_positions,
-                       'visited_plants_map': self.visited_plants_map}
+        reward = self.get_reward(action)
+        observation = {
+            'moving_box_centers': self.moving_box_center,
+            'unvisited_plants_map': self.unvisited_plants_map
+        }
         terminated = False
-        if self.visited_plants_map.sum() >= len(self.plant_positions):
+        if self.unvisited_plants_map.sum() ==0:
             terminated = True
         truncated = False
-        reward = self.get_reward()
         print("Current reward is: ", reward)
         info = {}
         return observation, reward, terminated, truncated, info
@@ -141,10 +151,19 @@ class AgricultureEnv(gym.Env):
         self.num_plants_captured = 0
         self.arm_state = "closed"
         self.target_pose = self.moving_box_center.copy()
-        self.visited_plants_map = np.zeros((GRID_SIZE * GRID_SIZE), dtype=np.int8)
-        observation = {'moving_box_centers': self.moving_box_center,
-                       'plant_positions': self.plant_positions,
-                       'visited_plants_map': self.visited_plants_map}
+        # self.visited_plants_map = np.zeros((GRID_SIZE * GRID_SIZE), dtype=np.int8)
+        self.unvisited_plants_map = np.ones((GRID_SIZE * GRID_SIZE), dtype=np.int8)
+        observation = {
+            'moving_box_centers': self.moving_box_center,
+            'unvisited_plants_map': self.unvisited_plants_map
+        }
+        if self.enable_viz and hasattr(self, 'plants_viz'): # Re-initialize
+            for plant in self.plants_viz:
+                plant.paint_uniform_color([0, 1, 0])  # Reset to green
+                self.vis.update_geometry(plant)
+        # observation = {'moving_box_centers': self.moving_box_center,
+        #                'plant_positions': self.plant_positions,
+        #                'visited_plants_map': self.visited_plants_map}
         info = {}
         return observation, info
 
@@ -153,8 +172,19 @@ class AgricultureEnv(gym.Env):
 
     def close(self):
         pass
-
-    def get_reward(self):
+    
+    def get_reward(self, action):
+        if self.unvisited_plants_map[action] == 1:
+            reward = 10.0
+            self.unvisited_plants_map[action] = 0
+            self.num_plants_captured += 1
+        else:
+            reward = 0.0
+        if self.enable_viz:
+            self.mark_plant_as_visited(action)
+        return reward
+    
+    def get_reward_continuous(self):
         # Params
         alpha = 10.0
         r_c = 0.2

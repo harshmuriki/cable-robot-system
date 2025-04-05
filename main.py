@@ -2,11 +2,13 @@ from stable_baselines3 import PPO
 from agriculture_env import AgricultureEnv
 import matplotlib.pyplot as plt
 import time
+from policy import MultiCNNPPO
 
 ############################ Training ############################
 env = AgricultureEnv(enable_viz=False, max_steps=64)
-exp_id = 'ppo_unvisited_4x4'
-model = PPO("MultiInputPolicy", env, verbose=1, device="cuda", tensorboard_log="./log/", n_steps=32)   # TODO: adjust n_steps and total_timesteps
+exp_id = 'ppo_unvisited_4_my_ppo'
+model = MultiCNNPPO("MultiCNNPolicy", env, verbose=1, device="cuda", tensorboard_log="./log/", n_steps=32)   # TODO: adjust n_steps and total_timesteps
+# model = PPO("MultiInputPolicy", env, verbose=1, device="cuda", tensorboard_log="./log/", n_steps=32)   # TODO: adjust n_steps and total_timesteps
 model.learn(total_timesteps=6400, progress_bar=True, log_interval=1, tb_log_name=exp_id)
 model.save(exp_id)
 del model

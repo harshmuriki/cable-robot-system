@@ -93,7 +93,8 @@ class AgricultureEnv(gym.Env):
 
     def generate_random_plant_set(self):
         num_total = GRID_SIZE * GRID_SIZE
-        num_plants = np.random.randint(num_total // 4, num_total // 2 + 1)
+        # num_plants = np.random.randint(num_total // 4, num_total // 2 + 1)
+        num_plants = int(num_total * 0.5)
         chosen_indices = np.random.choice(num_total, size=num_plants, replace=False)
         plant_positions = self.all_grid_positions[chosen_indices]
         return plant_positions, chosen_indices

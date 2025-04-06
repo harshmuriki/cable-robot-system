@@ -54,14 +54,12 @@ class AgricultureEnv(gym.Env):
         # Example for using image as input (channel-first; channel-last also works):
         self.observation_space = spaces.Dict(
             {
-                'moving_box_centers': spaces.Box(
-                    low=np.array([-MOVING_BOUNDARY_X, -MOVING_BOUNDARY_Y, 0]),
-                    high=np.array([MOVING_BOUNDARY_X, MOVING_BOUNDARY_Y, 0]),
-                    dtype=np.float32
+                'last_grid_map': spaces.Box(
+                    low=0, high=1, shape=(GRID_SIZE, GRID_SIZE), dtype=np.uint8
                 ),
-                'unvisited_plants_map': spaces.MultiBinary(
-                    n = GRID_SIZE * GRID_SIZE
-                ), # a binary GRID * GRID map of unvisited plants
+                'unvisited_plants_map': spaces.Box(
+                    low=0, high=1, shape=(GRID_SIZE, GRID_SIZE), dtype=np.uint8
+                )
                 # 'plant_positions': spaces.Box(
                 #     low=np.tile(
                 #         np.array([-MOVING_BOUNDARY_X, -MOVING_BOUNDARY_Y, 0]), (len(PLANTS), 1)),
@@ -141,9 +139,11 @@ class AgricultureEnv(gym.Env):
         self.cycle_time += self.delta_t
 
         reward = self.get_reward(action)
+        last_grid_map = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.uint8)
+        last_grid_map[action // GRID_SIZE, action % GRID_SIZE] = 1
         observation = {
-            'moving_box_centers': self.moving_box_center,
-            'unvisited_plants_map': self.unvisited_plants_map
+            'last_grid_map': last_grid_map,
+            'unvisited_plants_map': self.unvisited_plants_map.reshape((GRID_SIZE, GRID_SIZE)),
         }
         terminated = False
         if self.unvisited_plants_map.sum() ==0:
@@ -179,9 +179,11 @@ class AgricultureEnv(gym.Env):
         # self.visited_plants_map = np.zeros((GRID_SIZE * GRID_SIZE), dtype=np.int8)
         self.unvisited_plants_map = np.zeros((GRID_SIZE * GRID_SIZE), dtype=np.int8)
         self.unvisited_plants_map[self.active_plant_indices] = 1  # Mark the chosen plants as unvisited
+        last_grid_map = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.uint8)
+        last_grid_map[start_idx // GRID_SIZE, start_idx % GRID_SIZE] = 1
         observation = {
-            'moving_box_centers': self.moving_box_center,
-            'unvisited_plants_map': self.unvisited_plants_map
+            'last_grid_map': last_grid_map,
+            'unvisited_plants_map': self.unvisited_plants_map.reshape((GRID_SIZE, GRID_SIZE))
         }
         if self.enable_viz and hasattr(self, 'plants_viz'):
             for plant in self.plants_viz:

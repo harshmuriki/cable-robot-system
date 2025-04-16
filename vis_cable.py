@@ -8,7 +8,7 @@ BOX_SIZE = 0.3
 BOUNDING_BOX_LENGTH = 2.0
 BOUNDING_BOX_WIDTH = 2.0
 BOUNDING_BOX_HEIGHT = BOX_SIZE
-
+Z_OFFSET = -0.6
 ANCHORS = np.array([
     # bottom corners
     [-BOUNDING_BOX_LENGTH, -BOUNDING_BOX_WIDTH, -BOUNDING_BOX_HEIGHT],
@@ -22,6 +22,8 @@ ANCHORS = np.array([
     [-BOUNDING_BOX_LENGTH, BOUNDING_BOX_WIDTH, BOUNDING_BOX_HEIGHT],
     [BOUNDING_BOX_LENGTH, BOUNDING_BOX_WIDTH, BOUNDING_BOX_HEIGHT],
 ])
+
+ANCHORS_2 = ANCHORS + np.array([0, 0, Z_OFFSET])
 
 MARGIN = 0.2
 MOVING_BOUNDARY_X = BOUNDING_BOX_LENGTH - BOX_SIZE/2 - MARGIN
@@ -46,9 +48,9 @@ def sample_new_position():
 # This is the frame of the cable-robot system
 
 
-def create_bounding_box():
+def create_bounding_box(bbox_points=ANCHORS, colors=[0.33, 0.33, 0.33]):
     bbox = o3d.geometry.LineSet()
-    bbox_points = ANCHORS
+    bbox_points = bbox_points
 
     # Relationship between the bbox_points
     bbox_lines = [
@@ -57,7 +59,7 @@ def create_bounding_box():
         [0, 4], [1, 5], [2, 6], [3, 7]
     ]
     bbox.colors = o3d.utility.Vector3dVector(
-        [[0.5, 0.5, 0.5] for _ in bbox_lines])  # Gray lines
+        [colors for _ in bbox_lines])  # Gray lines
     bbox.points = o3d.utility.Vector3dVector(bbox_points)
     bbox.lines = o3d.utility.Vector2iVector(bbox_lines)
     return bbox
@@ -100,15 +102,15 @@ def get_box_corners(box_center):
     return box_corners
 
 
-def create_cables(box_center):
+def create_cables(box_center, anchors=ANCHORS, colors=[1, 0, 0]):
     box_corners = get_box_corners(box_center)
 
     lines = [[i, i + 8] for i in range(8)]
-    colors = [[1, 0, 0] for _ in lines]  # Red cables
+    colors = [colors for _ in lines]  # Red cables
 
     line_set = o3d.geometry.LineSet()
     line_set.points = o3d.utility.Vector3dVector(
-        np.vstack((ANCHORS, box_corners)))
+        np.vstack((anchors, box_corners)))
     line_set.lines = o3d.utility.Vector2iVector(lines)
     line_set.colors = o3d.utility.Vector3dVector(colors)
     return line_set
@@ -116,9 +118,10 @@ def create_cables(box_center):
 # Generate trajectory points between start and end
 
 
-def generate_positions(start, end, num_steps=10, spacing_fn=np.linspace):
+def generate_positions(start, end, num_steps=10, spacing_fn=np.linspace, z_offset=0):
+
     start = np.array(start)
-    end = np.array(end)
+    end = np.array(end) + np.array([0, 0, z_offset])
     positions = np.array([spacing_fn(start[i], end[i], num_steps)
                          for i in range(3)]).T
     return positions
@@ -164,11 +167,17 @@ def main():
     vis = o3d.visualization.Visualizer()
     vis.create_window()
 
-    bbox = create_bounding_box()
+    bbox = create_bounding_box(bbox_points=ANCHORS, colors=[0.5, 0.5, 0.5])
+    bbox_1 = create_bounding_box(
+        bbox_points=ANCHORS_2, colors=[0.33, 0.33, 0.33])
     box = create_box()
+    box_1 = create_box(color=[0.5, 0.5, 0.5])
     hydroponic_plate = create_hydroponic_plate()
     box.translate([0, 0, 0])  # Start position
-    cables = create_cables(np.array([0, 0, 0]))
+    box_1.translate([0, 0, Z_OFFSET-0.125])  # Start position
+    cables = create_cables(box.get_center(), anchors=ANCHORS, colors=[1, 0, 0])
+    cables_1 = create_cables(
+        box_1.get_center(), anchors=ANCHORS_2, colors=[0, 0, 1])
     coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
         size=0.3, origin=[0, 0, 0])
 
@@ -178,28 +187,47 @@ def main():
 
     vis.add_geometry(coordinate_frame)
     vis.add_geometry(bbox)
+    vis.add_geometry(bbox_1)
     vis.add_geometry(box)
+    vis.add_geometry(box_1)
     for plant in plants_viz:
         vis.add_geometry(plant)
     vis.add_geometry(hydroponic_plate)
     vis.add_geometry(cables)
+    vis.add_geometry(cables_1)
 
     # Start from top-left corner
-    for (x, y, z) in new_plants:
+    for i in range(len(new_plants)):
+
+        x, y, z = new_plants[i]
+        x_1, y_1, z_1 = new_plants[len(new_plants) - i - 1]
 
         start_pos = list(box.get_center())
         end_pos = [x, y, z]
 
         positions = generate_positions(start_pos, end_pos, num_steps=100)
 
-        print("Moving to a new plant: ", end_pos)
+        start_pos = list(box_1.get_center())
+        positions_1 = generate_positions(
+            start_pos, [x_1, y_1, z_1], num_steps=100, z_offset=Z_OFFSET)
 
-        for pos in positions:
+        for pos_idx in range(len(positions)):
+
+            pos = positions[pos_idx]
+            pos1 = positions_1[pos_idx]
             # print(f"Moving to: {pos}, Current: {box.get_center()}")
             box.translate(pos, relative=False)
+            box_1.translate(pos1, relative=False)
 
             new_cable_points = np.vstack((ANCHORS, get_box_corners(pos)))
+            new_cable_points_1 = np.vstack(
+                (ANCHORS_2, get_box_corners(pos1)))
+            
             cables.points = o3d.utility.Vector3dVector(new_cable_points)
+            cables_1.points = o3d.utility.Vector3dVector(new_cable_points_1)
+            
+            vis.update_geometry(box_1)
+            vis.update_geometry(cables_1)
             vis.update_geometry(box)
             vis.update_geometry(cables)
             vis.poll_events()
@@ -219,4 +247,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # pass

@@ -6,6 +6,7 @@ import time
 BOX_SIZE = 0.3
 BOUNDING_BOX_LENGTH = BOUNDING_BOX_WIDTH = 1.0
 BOUNDING_BOX_HEIGHT = BOX_SIZE
+Z_OFFSET = -0.6
 
 ANCHORS = np.array([
     # bottom corners
@@ -20,6 +21,8 @@ ANCHORS = np.array([
     [-BOUNDING_BOX_LENGTH, BOUNDING_BOX_WIDTH, BOUNDING_BOX_HEIGHT],
     [BOUNDING_BOX_LENGTH, BOUNDING_BOX_WIDTH, BOUNDING_BOX_HEIGHT],
 ])
+
+ANCHORS_2 = ANCHORS + np.array([0, 0, Z_OFFSET])
 
 MARGIN = 0.2
 MOVING_BOUNDARY_X = BOUNDING_BOX_LENGTH - BOX_SIZE/2 - MARGIN
@@ -111,6 +114,7 @@ class AgricultureEnv(gym.Env):
                     (ANCHORS, self.get_box_corners(pos)))
                 self.cables_viz.points = o3d.utility.Vector3dVector(
                     new_cable_points)
+                
                 self.vis.update_geometry(self.moving_box_viz)
                 self.vis.update_geometry(self.cables_viz)
                 self.vis.update_geometry(self.camera_zone_viz)
@@ -271,30 +275,50 @@ class AgricultureEnv(gym.Env):
         self.vis = o3d.visualization.Visualizer()
         self.vis.create_window()
 
-        self.moving_space_viz = self.create_bounding_box()
-        self.moving_box_viz = self.create_box()
-        self.hydroponic_plate_viz = self.create_hydroponic_plate()
+        # Robot 1
+        self.moving_space_viz = self.create_bounding_box(bbox_points=ANCHORS)
+        self.moving_box_viz = self.create_box(colors=[255/255, 165/255, 93/255])
         self.camera_zone_viz = self.create_camera_zone()
         self.moving_box_viz.translate(self.moving_box_center)  # Start position
         self.camera_zone_viz.translate(
             self.moving_box_center + np.array([0, 0, 0.6]))  # Start position
-        self.cables_viz = self.create_cables(self.moving_box_center)
+        self.cables_viz = self.create_cables(self.moving_box_center, anchors=ANCHORS, colors=[1, 0, 0])
+
+        self.vis.add_geometry(self.moving_space_viz)
+        self.vis.add_geometry(self.moving_box_viz)
+        self.vis.add_geometry(self.camera_zone_viz)
+        self.vis.add_geometry(self.cables_viz)
+
+        # Robot 2
+        self.moving_space_viz_2 = self.create_bounding_box(bbox_points=ANCHORS_2)
+        self.moving_box_viz_2 = self.create_box(colors=[255/255, 223/255, 136/255])
+        self.camera_zone_viz_2 = self.create_camera_zone(color=[0.9, 0, 0.2])
+        self.moving_box_viz_2.translate([0, 0, Z_OFFSET-0.125])  # Start position
+        self.camera_zone_viz_2.translate(
+            self.moving_box_center + np.array([0, 0, 0.6]))  # Start position
+        self.cables_viz_2 = self.create_cables(self.moving_box_viz_2.get_center(), anchors=ANCHORS_2, colors=[0, 0, 1])
+
+        self.vis.add_geometry(self.moving_space_viz_2)
+        self.vis.add_geometry(self.moving_box_viz_2)
+        self.vis.add_geometry(self.camera_zone_viz_2)
+        self.vis.add_geometry(self.cables_viz_2)
+
+        # Both robots
+        self.hydroponic_plate_viz = self.create_hydroponic_plate()
         coordinate_frame_viz = o3d.geometry.TriangleMesh.create_coordinate_frame(
             size=0.3, origin=[0, 0, 0])
         self.plants_viz = self.create_plants_visualization(
             plants=self.plant_positions)
+
         self.vis.add_geometry(coordinate_frame_viz)
-        self.vis.add_geometry(self.moving_space_viz)
-        self.vis.add_geometry(self.moving_box_viz)
-        self.vis.add_geometry(self.camera_zone_viz)
+
         for plant in self.plants_viz:
             self.vis.add_geometry(plant)
         self.vis.add_geometry(self.hydroponic_plate_viz)
-        self.vis.add_geometry(self.cables_viz)
 
-    def create_bounding_box(self):
+    def create_bounding_box(self, bbox_points=ANCHORS, colors=[0, 0, 0]):
         bbox = o3d.geometry.LineSet()
-        bbox_points = ANCHORS
+        bbox_points = bbox_points
 
         # Relationship between the bbox_points
         bbox_lines = [
@@ -303,18 +327,18 @@ class AgricultureEnv(gym.Env):
             [0, 4], [1, 5], [2, 6], [3, 7]
         ]
         bbox.colors = o3d.utility.Vector3dVector(
-            [[0.5, 0.5, 0.5] for _ in bbox_lines])  # Gray lines
+            [colors for _ in bbox_lines])  # Gray lines
         bbox.points = o3d.utility.Vector3dVector(bbox_points)
         bbox.lines = o3d.utility.Vector2iVector(bbox_lines)
         return bbox
 
     # This is the box that moves around (wooden box)
 
-    def create_box(self, size=BOX_SIZE, color=[92/255, 29/255, 16/255]):
+    def create_box(self, size=BOX_SIZE, colors=[92/255, 29/255, 16/255]):
         mesh = o3d.geometry.TriangleMesh.create_box(
             width=size, height=size, depth=size)
         mesh.compute_vertex_normals()
-        mesh.paint_uniform_color(color)
+        mesh.paint_uniform_color(colors)
         return mesh
 
     def create_camera_zone(self, resolution=50, color=[0.9, 0.8, 0.2]):
@@ -349,15 +373,15 @@ class AgricultureEnv(gym.Env):
         ])
         return box_corners
 
-    def create_cables(self, box_center):
+    def create_cables(self, box_center, anchors=ANCHORS, colors=[1, 0, 0]):
         box_corners = self.get_box_corners(box_center)
 
         lines = [[i, i + 8] for i in range(8)]
-        colors = [[1, 0, 0] for _ in lines]  # Red cables
+        colors = [colors for _ in lines]  # Red cables
 
         line_set = o3d.geometry.LineSet()
         line_set.points = o3d.utility.Vector3dVector(
-            np.vstack((ANCHORS, box_corners)))
+            np.vstack((anchors, box_corners)))
         line_set.lines = o3d.utility.Vector2iVector(lines)
         line_set.colors = o3d.utility.Vector3dVector(colors)
         return line_set

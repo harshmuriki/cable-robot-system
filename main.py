@@ -14,10 +14,10 @@ def make_env():
 
 exp_id = 'ppo_unvisited_4x4_v3'
 vec_env = DummyVecEnv([make_env for _ in range(8)])  # 8 parallel copies
-model = PPO("MultiInputPolicy", vec_env, verbose=1, n_steps=256,
+model = PPO("MultiInputPolicy", vec_env, verbose=1, n_steps=50,
             batch_size=64, device="auto", tensorboard_log="./log/",)
 
-model.learn(total_timesteps=200000, progress_bar=True,
+model.learn(total_timesteps=200, progress_bar=True,
             log_interval=1, tb_log_name=exp_id)
 model.save(exp_id)
 del model

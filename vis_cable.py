@@ -205,6 +205,10 @@ def main():
             vis.poll_events()
             vis.update_renderer()
 
+            # cam = vis.get_view_control().convert_to_pinhole_camera_parameters()
+            # o3d.io.write_pinhole_camera_parameters("camera.json", cam)
+            # print("Wrote camera.json – adjust your view manually and re‑run to lock it in.")
+
         # Non-blocking pause
         pause_start_time = time.time()
         while time.time() - pause_start_time < TIME_TAKEN_PER_PLANT:

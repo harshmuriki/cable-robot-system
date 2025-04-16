@@ -42,16 +42,7 @@ class AgricultureEnv(gym.Env):
 
     def __init__(self, enable_viz=True, max_steps=64):
         super().__init__()
-        # Define action and observation space
-        # They must be gym.spaces objects
-        # Example when using discrete actions:
-        # self.action_space = spaces.Box(
-        #     low=np.array([-MOVING_BOUNDARY_X, -MOVING_BOUNDARY_Y, 0]),
-        #     high=np.array([MOVING_BOUNDARY_X, MOVING_BOUNDARY_Y, 0]),
-        #     dtype=np.float32
-        # )
         self.action_space = spaces.Discrete(GRID_SIZE * GRID_SIZE)
-        # Example for using image as input (channel-first; channel-last also works):
         self.observation_space = spaces.Dict(
             {
                 'last_grid_map': spaces.Box(
@@ -59,24 +50,22 @@ class AgricultureEnv(gym.Env):
                 ),
                 'unvisited_plants_map': spaces.Box(
                     low=0, high=1, shape=(GRID_SIZE, GRID_SIZE), dtype=np.uint8
-                )
-                # 'plant_positions': spaces.Box(
-                #     low=np.tile(
-                #         np.array([-MOVING_BOUNDARY_X, -MOVING_BOUNDARY_Y, 0]), (len(PLANTS), 1)),
-                #     high=np.tile(
-                #         np.array([MOVING_BOUNDARY_X, MOVING_BOUNDARY_Y, 0]), (len(PLANTS), 1)),
-                #     shape=(len(PLANTS), 3),
-                #     dtype=np.float32
-                # ),
-                # 'visited_plants_map': spaces.MultiBinary(
-                #     n = GRID_SIZE * GRID_SIZE
-                # ), # a binary GRID * GRID map of visited plants
+                ),
+                'current_position': spaces.Box(
+                    low=np.array([-MOVING_BOUNDARY_X, -MOVING_BOUNDARY_Y, 0]),
+                    high=np.array([MOVING_BOUNDARY_X, MOVING_BOUNDARY_Y, 0]),
+                    shape=(3,),
+                    dtype=np.float32
+                ),
             }
         )
 
-        self.all_grid_positions = np.linspace(-MOVING_BOUNDARY_X, MOVING_BOUNDARY_X, GRID_SIZE)
-        self.all_grid_positions = np.array([[x, y] for x in self.all_grid_positions for y in self.all_grid_positions])
-        self.all_grid_positions = np.hstack((self.all_grid_positions, np.zeros((len(self.all_grid_positions), 1))))[::-1]
+        self.all_grid_positions = np.linspace(
+            -MOVING_BOUNDARY_X, MOVING_BOUNDARY_X, GRID_SIZE)
+        self.all_grid_positions = np.array(
+            [[x, y] for x in self.all_grid_positions for y in self.all_grid_positions])
+        self.all_grid_positions = np.hstack(
+            (self.all_grid_positions, np.zeros((len(self.all_grid_positions), 1))))[::-1]
 
         self.target_pose = None
         self.delta_t = 0.1
@@ -87,34 +76,37 @@ class AgricultureEnv(gym.Env):
         self.reset()
         if enable_viz:
             self.init_viusalization()
-    def mark_plant_as_visited(self, idx, color=[0.7, 0.7, 0.7]):
+
+    def mark_plant_as_visited(self, idx, color=[0, 1, 0]):
+        # Set visited plant to green
         self.plants_viz[idx].paint_uniform_color(color)
         self.vis.update_geometry(self.plants_viz[idx])
 
-    def generate_random_plant_set(self):
+    def generate_random_plant_set(self, percentage=0.5):
         num_total = GRID_SIZE * GRID_SIZE
-        # num_plants = np.random.randint(num_total // 4, num_total // 2 + 1)
-        num_plants = int(num_total * 0.5)
-        chosen_indices = np.random.choice(num_total, size=num_plants, replace=False)
+        num_plants = int(num_total * percentage)
+        chosen_indices = np.random.choice(
+            num_total, size=num_plants, replace=False)
         plant_positions = self.all_grid_positions[chosen_indices]
         return plant_positions, chosen_indices
 
     def step(self, action):
-        # # action: [x, y, z]
-        # self.target_pose = np.array(action)
         self.target_pose = self.all_grid_positions[action]
 
         start_pos = self.moving_box_center
         end_pos = self.target_pose
         self.moving_box_center = end_pos
 
-        print("Moving to a new position: ", end_pos)
+        dist = np.linalg.norm(end_pos - start_pos)
+
+        # print("Moving to a new position: ", end_pos)
         if self.enable_viz:
             positions = self.interpolate_traj(
                 start_pos, end_pos, num_steps=100)
             for pos in positions:
                 self.moving_box_viz.translate(pos, relative=False)
-                self.camera_zone_viz.translate(pos + np.array([0, 0, 0.6]), relative=False)
+                self.camera_zone_viz.translate(
+                    pos + np.array([0, 0, 0.6]), relative=False)
                 new_cable_points = np.vstack(
                     (ANCHORS, self.get_box_corners(pos)))
                 self.cables_viz.points = o3d.utility.Vector3dVector(
@@ -128,30 +120,79 @@ class AgricultureEnv(gym.Env):
 
         else:
             self.capture_positions.append(self.moving_box_center.tolist())
-        
+
         pause_start_time = time.time()
-        while time.time() - pause_start_time < TIME_TAKEN_PER_PLANT:
-                # self.vis.poll_events()
-                # self.vis.update_renderer()
-                # self.capture_positions.append(self.moving_box_center.tolist())
+        if self.enable_viz:
+            while time.time() - pause_start_time < TIME_TAKEN_PER_PLANT:
                 pass
 
-        # Use simulated time instead of wall-clock time:
         self.cycle_time += self.delta_t
 
-        reward = self.get_reward(action)
+        # --- Modified reward logic ---
+        base_reward = 10.0
+        revisit_penalty = -1.0  # Penalty for revisiting
+        step_penalty = -1.0     # Small penalty for each step
+        no_plant_penalty = -2.0  # Penalty for going to a location with no plant
+        new_plant_reward = 5.0  # Reward for visiting a new plant
+        reward = step_penalty
+        reward += - dist * 2.0   # Penalty for distance moved
+
+        if action not in self.active_plant_indices:
+            reward += no_plant_penalty  # No plant at this location
+            # print("No plant at this location")
+        elif self.unvisited_plants_map[action] == 1:
+            # print("Visiting a new plant")
+            current_grid = np.array(divmod(action, GRID_SIZE))  # (row, col)
+            last_grid_coord = np.array(divmod(self.last_grid, GRID_SIZE))
+
+            # Get remaining unvisited grid coordinates
+            unvisited_indices = np.where(self.unvisited_plants_map == 1)[0]
+            assert len(unvisited_indices) > 0
+            unvisited_coords = np.array(
+                [divmod(i, GRID_SIZE) for i in unvisited_indices])
+
+            # If it chooses a closer plant, give a higher reward
+            dists_from_last = np.linalg.norm(
+                unvisited_coords - last_grid_coord, axis=1)
+            closest_dist = np.min(dists_from_last)
+            current_dist = np.linalg.norm(current_grid - last_grid_coord)
+
+            # Scale reward
+            if current_dist > 1e-6:
+                coef = closest_dist / current_dist
+                coef = np.clip(coef, 0.0, 2.0)
+                # reward += base_reward * coef
+                reward += new_plant_reward
+            else:
+                reward += base_reward
+
+            # reward += new_plant_reward
+
+            self.unvisited_plants_map[action] = 0
+            self.num_plants_captured += 1
+
+            if self.enable_viz:
+                idx = list(self.active_plant_indices).index(action)
+                self.mark_plant_as_visited(idx)
+        else:
+            # print("Already visited this plant")
+            reward += revisit_penalty  # Penalize revisiting
+        # --- End modified reward logic ---
+
         last_grid_map = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.uint8)
         last_grid_map[action // GRID_SIZE, action % GRID_SIZE] = 1
         observation = {
             'last_grid_map': last_grid_map,
             'unvisited_plants_map': self.unvisited_plants_map.reshape((GRID_SIZE, GRID_SIZE)),
+            'current_position': np.array(self.moving_box_center, dtype=np.float32),
         }
         terminated = False
-        if self.unvisited_plants_map.sum() ==0:
+        if self.unvisited_plants_map.sum() == 0:
             terminated = True
         self.step_count += 1
-        truncated = (self.step_count >= self.max_steps)  # Truncate if max steps reached
-        print("Current reward is: ", reward)
+        # Truncate if max steps reached
+        truncated = (self.step_count >= self.max_steps)
+        # print("Current reward is: ", reward)
         info = {}
         self.last_grid = action
         return observation, reward, terminated, truncated, info
@@ -168,7 +209,7 @@ class AgricultureEnv(gym.Env):
             start_idx = np.random.choice(list(all_indices))
         self.moving_box_center = self.all_grid_positions[start_idx]
         self.last_grid = start_idx
-        
+
         self.capture_positions = []
         self.current_target = None
         # Remove wall-clock based cycle time and use simulated time:
@@ -177,24 +218,41 @@ class AgricultureEnv(gym.Env):
         self.step_count = 0  # Reset step count for the new episode
         self.arm_state = "closed"
         self.target_pose = self.moving_box_center.copy()
-        # self.visited_plants_map = np.zeros((GRID_SIZE * GRID_SIZE), dtype=np.int8)
-        self.unvisited_plants_map = np.zeros((GRID_SIZE * GRID_SIZE), dtype=np.int8)
-        self.unvisited_plants_map[self.active_plant_indices] = 1  # Mark the chosen plants as unvisited
+        self.unvisited_plants_map = np.zeros(
+            (GRID_SIZE * GRID_SIZE), dtype=np.int8)
+        # Mark the chosen plants as unvisited
+        self.unvisited_plants_map[self.active_plant_indices] = 1
         last_grid_map = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.uint8)
         last_grid_map[start_idx // GRID_SIZE, start_idx % GRID_SIZE] = 1
         observation = {
             'last_grid_map': last_grid_map,
-            'unvisited_plants_map': self.unvisited_plants_map.reshape((GRID_SIZE, GRID_SIZE))
+            'unvisited_plants_map': self.unvisited_plants_map.reshape((GRID_SIZE, GRID_SIZE)),
+            'current_position': np.array(self.moving_box_center, dtype=np.float32),
         }
         if self.enable_viz and hasattr(self, 'plants_viz'):
             for plant in self.plants_viz:
                 self.vis.remove_geometry(plant, reset_bounding_box=False)
-            self.plants_viz = self.create_plants_visualization(plants=self.plant_positions)
+            # Unvisited plants are gray
+            self.plants_viz = self.create_plants_visualization(
+                plants=self.plant_positions, color=[0.7, 0.7, 0.7])
             for plant in self.plants_viz:
                 self.vis.add_geometry(plant)
-        # observation = {'moving_box_centers': self.moving_box_center,
-        #                'plant_positions': self.plant_positions,
-        #                'visited_plants_map': self.visited_plants_map}
+
+        # Set the visualization of the cable robot
+        # try:
+        #     cam = o3d.io.read_pinhole_camera_parameters("camera.json")
+        #     self.vis.get_view_control().convert_from_pinhole_camera_parameters(cam)
+        # except Exception as e:
+        #     print("camera.json not found run once to generate it:", e)
+        if self.enable_viz and hasattr(self, 'vis'):  # self.vis is not None:
+            # now override the camera once
+            ctr = self.vis.get_view_control()
+            ctr.set_front([0.0, 0.0, -1.0])
+            ctr.set_lookat([0.0, 0.0, -1.0])
+            ctr.set_up([0.0, -1.0, 0.0])
+            ctr.set_zoom(0.5)
+            self.vis.poll_events()
+            self.vis.update_renderer()
         info = {}
         return observation, info
 
@@ -203,7 +261,7 @@ class AgricultureEnv(gym.Env):
 
     def close(self):
         pass
-    
+
     def get_reward(self, action):
         base_reward = 10.0
         if self.unvisited_plants_map[action] == 1:
@@ -213,10 +271,12 @@ class AgricultureEnv(gym.Env):
             # Get remaining unvisited grid coordinates
             unvisited_indices = np.where(self.unvisited_plants_map == 1)[0]
             assert len(unvisited_indices) > 0
-            unvisited_coords = np.array([divmod(i, GRID_SIZE) for i in unvisited_indices])
+            unvisited_coords = np.array(
+                [divmod(i, GRID_SIZE) for i in unvisited_indices])
 
             # Distances from last to unvisited
-            dists_from_last = np.linalg.norm(unvisited_coords - last_grid_coord, axis=1)
+            dists_from_last = np.linalg.norm(
+                unvisited_coords - last_grid_coord, axis=1)
             closest_dist = np.min(dists_from_last)
             current_dist = np.linalg.norm(current_grid - last_grid_coord)
 
@@ -236,9 +296,9 @@ class AgricultureEnv(gym.Env):
                 self.mark_plant_as_visited(idx)
         else:
             reward = 0.0
-        
+
         return reward
-    
+
     def get_reward_continuous(self):
         # Params
         alpha = 10.0
@@ -249,11 +309,13 @@ class AgricultureEnv(gym.Env):
         velocity_threshold = 0.1
 
         # Plant detection reward
-        detection_threshold = CAMERA_RADIUS  # threshold distance to consider the plant "seen"
+        # threshold distance to consider the plant "seen"
+        detection_threshold = CAMERA_RADIUS
         reward = 0.0
 
         # Calculate distances to all plants
-        distances = np.linalg.norm(self.plant_positions - self.moving_box_center, axis=1)
+        distances = np.linalg.norm(
+            self.plant_positions - self.moving_box_center, axis=1)
 
         # Find plants within detection threshold
         detected_plants = np.where(distances <= detection_threshold)[0]
@@ -267,28 +329,8 @@ class AgricultureEnv(gym.Env):
 
         R_new_plant = reward
 
-        # # Use simulated time (cycle_time)
-        # T_measured = self.cycle_time
-        # R_T = beta * max(0, T_measured - self.T_max)
-
-        # R_eff = efficiency_const * \
-        #     (self.num_plants_captured / T_measured) if T_measured > 0 else 0
-
-        # idle_penalty = 0.0
-        # if len(self.capture_positions) >= 2:
-        #     p_prev = np.array(self.capture_positions[0])
-        #     p_current = np.array(self.capture_positions[-1])
-        #     velocity = np.linalg.norm(
-        #         p_current - p_prev) / T_measured if T_measured > 0 else 0
-        #     if velocity < velocity_threshold and R_new_plant > 0.0:
-        #         idle_penalty = idle_penalty_factor
-
         # print(
-        #     f"R_new_plant: {R_new_plant}, R_T: {R_T}, R_eff: {R_eff}, idle_penalty: {idle_penalty}")
-        # # Include all reward components
-        # total_reward = R_new_plant - R_T + R_eff - idle_penalty
-        print(
-            f"R_new_plant: {R_new_plant}")
+        #     f"R_new_plant: {R_new_plant}")
         total_reward = R_new_plant
         return total_reward
 
@@ -301,7 +343,8 @@ class AgricultureEnv(gym.Env):
         self.hydroponic_plate_viz = self.create_hydroponic_plate()
         self.camera_zone_viz = self.create_camera_zone()
         self.moving_box_viz.translate(self.moving_box_center)  # Start position
-        self.camera_zone_viz.translate(self.moving_box_center + np.array([0, 0, 0.6]))  # Start position
+        self.camera_zone_viz.translate(
+            self.moving_box_center + np.array([0, 0, 0.6]))  # Start position
         self.cables_viz = self.create_cables(self.moving_box_center)
         coordinate_frame_viz = o3d.geometry.TriangleMesh.create_coordinate_frame(
             size=0.3, origin=[0, 0, 0])
@@ -340,8 +383,10 @@ class AgricultureEnv(gym.Env):
         mesh.compute_vertex_normals()
         mesh.paint_uniform_color(color)
         return mesh
+
     def create_camera_zone(self, resolution=50, color=[0.9, 0.8, 0.2]):
-        circle_zone = o3d.geometry.TriangleMesh.create_cylinder(radius=CAMERA_RADIUS, height=0.001, resolution=resolution)
+        circle_zone = o3d.geometry.TriangleMesh.create_cylinder(
+            radius=CAMERA_RADIUS, height=0.001, resolution=resolution)
         circle_zone.compute_vertex_normals()
         circle_zone.paint_uniform_color(color)
         return circle_zone
@@ -391,7 +436,8 @@ class AgricultureEnv(gym.Env):
                               for i in range(3)]).T
         return positions
 
-    def create_plants_visualization(self, size=0.1, color=[0, 1, 0], plants=PLANTS):
+    def create_plants_visualization(self, size=0.1, color=[0.7, 0.7, 0.7], plants=PLANTS):
+        # Default color is gray for unvisited
         plant_meshes = []
         for plant_center in plants:
             x, y, z = plant_center

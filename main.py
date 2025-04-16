@@ -2,15 +2,26 @@ from stable_baselines3 import PPO
 from agriculture_env import AgricultureEnv
 import matplotlib.pyplot as plt
 import time
+from stable_baselines3.common.vec_env import DummyVecEnv
 
 ############################ Training ############################
-env = AgricultureEnv(enable_viz=False, max_steps=64)
-exp_id = 'ppo_unvisited_4x4'
-model = PPO("MultiInputPolicy", env, verbose=1, device="cuda", tensorboard_log="./log/", n_steps=32)   # TODO: adjust n_steps and total_timesteps
-model.learn(total_timesteps=6400, progress_bar=True, log_interval=1, tb_log_name=exp_id)
+print("Starting training")
+
+
+def make_env():
+    return AgricultureEnv(enable_viz=False, max_steps=64)
+
+
+exp_id = 'ppo_unvisited_4x4_v2'
+vec_env = DummyVecEnv([make_env for _ in range(8)])  # 8 parallel copies
+model = PPO("MultiInputPolicy", vec_env, verbose=1, n_steps=256,
+            batch_size=64, device="auto", tensorboard_log="./log/",)
+
+# model = PPO("MultiInputPolicy", env, verbose=1, device="auto", tensorboard_log="./log/", n_steps=64)   # TODO: adjust n_steps and total_timesteps
+model.learn(total_timesteps=200000, progress_bar=True,
+            log_interval=1, tb_log_name=exp_id)
 model.save(exp_id)
 del model
-
 
 
 ############################ Evaluation ############################
@@ -44,6 +55,7 @@ def visualize_rewards(total_rewards, cycle_times):
 
     plt.tight_layout()
     plt.show()
+
 
 env = AgricultureEnv(enable_viz=True)
 model = PPO.load(exp_id, device="cuda")

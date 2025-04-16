@@ -12,12 +12,11 @@ def make_env():
     return AgricultureEnv(enable_viz=False, max_steps=64)
 
 
-exp_id = 'ppo_unvisited_4x4_v2'
+exp_id = 'ppo_unvisited_4x4_v3'
 vec_env = DummyVecEnv([make_env for _ in range(8)])  # 8 parallel copies
 model = PPO("MultiInputPolicy", vec_env, verbose=1, n_steps=256,
             batch_size=64, device="auto", tensorboard_log="./log/",)
 
-# model = PPO("MultiInputPolicy", env, verbose=1, device="auto", tensorboard_log="./log/", n_steps=64)   # TODO: adjust n_steps and total_timesteps
 model.learn(total_timesteps=200000, progress_bar=True,
             log_interval=1, tb_log_name=exp_id)
 model.save(exp_id)
@@ -58,7 +57,7 @@ def visualize_rewards(total_rewards, cycle_times):
 
 
 env = AgricultureEnv(enable_viz=True)
-model = PPO.load(exp_id, device="cuda")
+model = PPO.load(exp_id, device="auto")
 obs, _ = env.reset()  # Unpack the tuple to get the observation
 print("Done with training")
 

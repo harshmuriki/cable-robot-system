@@ -128,8 +128,7 @@ class AgricultureEnv(gym.Env):
 
         self.cycle_time += self.delta_t
 
-        # --- Modified reward logic ---
-        base_reward = 10.0
+        # --- Reward logic ---
         revisit_penalty = -1.0  # Penalty for revisiting
         step_penalty = -1.0     # Small penalty for each step
         no_plant_penalty = -2.0  # Penalty for going to a location with no plant
@@ -142,31 +141,7 @@ class AgricultureEnv(gym.Env):
             # print("No plant at this location")
         elif self.unvisited_plants_map[action] == 1:
             # print("Visiting a new plant")
-            current_grid = np.array(divmod(action, GRID_SIZE))  # (row, col)
-            last_grid_coord = np.array(divmod(self.last_grid, GRID_SIZE))
-
-            # Get remaining unvisited grid coordinates
-            unvisited_indices = np.where(self.unvisited_plants_map == 1)[0]
-            assert len(unvisited_indices) > 0
-            unvisited_coords = np.array(
-                [divmod(i, GRID_SIZE) for i in unvisited_indices])
-
-            # If it chooses a closer plant, give a higher reward
-            dists_from_last = np.linalg.norm(
-                unvisited_coords - last_grid_coord, axis=1)
-            closest_dist = np.min(dists_from_last)
-            current_dist = np.linalg.norm(current_grid - last_grid_coord)
-
-            # Scale reward
-            if current_dist > 1e-6:
-                coef = closest_dist / current_dist
-                coef = np.clip(coef, 0.0, 2.0)
-                # reward += base_reward * coef
-                reward += new_plant_reward
-            else:
-                reward += base_reward
-
-            # reward += new_plant_reward
+            reward += new_plant_reward
 
             self.unvisited_plants_map[action] = 0
             self.num_plants_captured += 1
@@ -177,7 +152,6 @@ class AgricultureEnv(gym.Env):
         else:
             # print("Already visited this plant")
             reward += revisit_penalty  # Penalize revisiting
-        # --- End modified reward logic ---
 
         last_grid_map = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.uint8)
         last_grid_map[action // GRID_SIZE, action % GRID_SIZE] = 1
@@ -199,14 +173,8 @@ class AgricultureEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         self.plant_positions, self.active_plant_indices = self.generate_random_plant_set()
-        # randomly set center to a sampled grid without plants
-        all_indices = set(range(GRID_SIZE * GRID_SIZE))
-        plant_set = set(self.active_plant_indices)
-        empty_indices = list(all_indices - plant_set)
-        if len(empty_indices) > 0:
-            start_idx = np.random.choice(empty_indices)
-        else:
-            start_idx = np.random.choice(list(all_indices))
+        # Start position is the bottom right corner
+        start_idx = 0
         self.moving_box_center = self.all_grid_positions[start_idx]
         self.last_grid = start_idx
 
@@ -299,41 +267,6 @@ class AgricultureEnv(gym.Env):
 
         return reward
 
-    def get_reward_continuous(self):
-        # Params
-        alpha = 10.0
-        r_c = 0.2
-        beta = 0.2
-        efficiency_const = 5.0
-        idle_penalty_factor = 1.0
-        velocity_threshold = 0.1
-
-        # Plant detection reward
-        # threshold distance to consider the plant "seen"
-        detection_threshold = CAMERA_RADIUS
-        reward = 0.0
-
-        # Calculate distances to all plants
-        distances = np.linalg.norm(
-            self.plant_positions - self.moving_box_center, axis=1)
-
-        # Find plants within detection threshold
-        detected_plants = np.where(distances <= detection_threshold)[0]
-
-        # Update visited plants map and calculate reward
-        for idx in detected_plants:
-            if self.visited_plants_map[idx] == 0:
-                reward += 10.0
-                self.visited_plants_map[idx] = 1
-                self.num_plants_captured += 1
-
-        R_new_plant = reward
-
-        # print(
-        #     f"R_new_plant: {R_new_plant}")
-        total_reward = R_new_plant
-        return total_reward
-
     def init_viusalization(self):
         self.vis = o3d.visualization.Visualizer()
         self.vis.create_window()
@@ -390,8 +323,8 @@ class AgricultureEnv(gym.Env):
         circle_zone.compute_vertex_normals()
         circle_zone.paint_uniform_color(color)
         return circle_zone
-    # This is the points/conners of the box that moves around
 
+    # This is the points/conners of the box that moves around
     def get_box_corners(self, box_center):
         half_size = BOX_SIZE / 2
         box_corners = np.array([

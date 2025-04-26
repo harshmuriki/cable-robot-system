@@ -1,0 +1,14 @@
+env: agriculture
+env_args:
+  grid_size: 4               # Size of the grid (grid x grid)
+  num_agents: 2              # Number of robots
+  max_steps: 64              # Max steps per episode
+  enable_viz: false          # Set to true to enable Open3D visualization
+
+seed: 42
+
+mask_flag: False
+global_state_flag: False
+opp_action_in_cc: True
+#fixed_batch_timesteps: 4000
+agent_level_batch_update: True

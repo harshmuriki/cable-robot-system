@@ -51,12 +51,6 @@ class AgricultureEnv(gym.Env):
                 'unvisited_plants_map': spaces.Box(
                     low=0, high=1, shape=(GRID_SIZE, GRID_SIZE), dtype=np.uint8
                 ),
-                'current_position': spaces.Box(
-                    low=np.array([-MOVING_BOUNDARY_X, -MOVING_BOUNDARY_Y, 0]),
-                    high=np.array([MOVING_BOUNDARY_X, MOVING_BOUNDARY_Y, 0]),
-                    shape=(3,),
-                    dtype=np.float32
-                ),
             }
         )
 
@@ -158,7 +152,6 @@ class AgricultureEnv(gym.Env):
         observation = {
             'last_grid_map': last_grid_map,
             'unvisited_plants_map': self.unvisited_plants_map.reshape((GRID_SIZE, GRID_SIZE)),
-            'current_position': np.array(self.moving_box_center, dtype=np.float32),
         }
         terminated = False
         if self.unvisited_plants_map.sum() == 0:
@@ -195,7 +188,6 @@ class AgricultureEnv(gym.Env):
         observation = {
             'last_grid_map': last_grid_map,
             'unvisited_plants_map': self.unvisited_plants_map.reshape((GRID_SIZE, GRID_SIZE)),
-            'current_position': np.array(self.moving_box_center, dtype=np.float32),
         }
         if self.enable_viz and hasattr(self, 'plants_viz'):
             for plant in self.plants_viz:

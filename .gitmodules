@@ -1,0 +1,3 @@
+[submodule "MARLlib"]
+	path = MARLlib
+	url = https://github.com/Replicable-MARL/MARLlib.git
